@@ -234,6 +234,21 @@ class Particle : public ParticleBase<Tdim> {
     return state_variables_.at(var);
   }
 
+  //! Assign particle velocity constraint
+  //! Directions can take values between 0 and Dim * Nphases
+  //! \param[in] dir Direction of velocity constraint
+  //! \param[in] velocity Applied velocity constraint
+  //ZTC add
+  bool assign_particle_velocity_constraint(unsigned dir, double velocity) override;
+
+  //! Apply particle velocity constraints
+  //ZTC add
+  void apply_particle_velocity_constraints() override;
+
+
+
+
+
  private:
   //! Update pressure of the particles
   //! \param[in] phase Index corresponding to the phase
@@ -288,6 +303,9 @@ class Particle : public ParticleBase<Tdim> {
   std::vector<Eigen::MatrixXd> bmatrix_;
   //! Logger
   std::unique_ptr<spdlog::logger> console_;
+
+  //! Particle velocity constraints(ZTC add)
+  std::map<unsigned, double> particle_velocity_constraints_;
 };  // Particle class
 }  // namespace mpm
 

@@ -224,6 +224,16 @@ class Mesh {
       const std::vector<std::tuple<mpm::Index, unsigned, double>>&
           particle_tractions);
 
+  //! Assign particle velocity constraints
+  //! \param[in] particle_constraints Velocity at dir on particle
+  //ZTC add
+  bool assign_particle_velocity_constraints(
+      const std::vector<std::tuple<mpm::Index, unsigned, double>>&
+          particle_velocity_constraints);
+
+
+
+
   //! Assign nodal traction force
   //! \param[in] nodal_tractions Traction at dir on nodes
   bool assign_nodal_tractions(

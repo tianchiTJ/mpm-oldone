@@ -81,6 +81,12 @@ class ReadMesh {
   virtual std::vector<std::tuple<mpm::Index, unsigned, double>>
       read_particles_tractions(const std::string& traction_file) = 0;
 
+  //! Read particle velocity constraints file
+  //! \param[in] velocity_files file name with particle velocity
+  //ZTC add
+  virtual std::vector<std::tuple<mpm::Index, unsigned, double>>
+      read_particle_velocity_constraints(const std::string& particle_velocity_constraints_file) = 0;
+
   //! Read particles cells file
   //! \param[in] particles_cells_file file name with particle cell ids
   virtual std::vector<std::array<mpm::Index, 2>> read_particles_cells(

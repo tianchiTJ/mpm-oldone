@@ -344,6 +344,17 @@ bool mpm::MPMExplicit<Tdim>::initialise_particles() {
             "Particles tractions are not properly assigned");
     }
 
+    // Read and assign particle velocity constraints
+    //ZTC add
+    if (!io_->file_name("particle_velocity_constraints").empty()) {
+      bool particle_velocity_constraints = mesh_->assign_particle_velocity_constraints(
+          particle_reader->read_particle_velocity_constraints(
+              io_->file_name("particle_velocity_constraints")));
+      if (!particle_velocity_constraints)
+        throw std::runtime_error(
+            "Particle velocity constraints are not properly assigned");
+    }
+
     // Read and assign particles stresses
     if (!io_->file_name("particles_stresses").empty()) {
 
