@@ -4,6 +4,7 @@
 #include <array>
 #include <limits>
 #include <mutex>
+#include <tuple>
 #include <vector>
 
 #include "logger.h"
@@ -158,6 +159,10 @@ class Node : public NodeBase<Tdim> {
     return acceleration_.col(phase);
   }
 
+  // Compute Rayleigh damping force
+  bool compute_damping_force(unsigned phase, double dt,
+                             const double rayleigh_alpha,
+                             const double rayleigh_beta) override;
   //! Compute acceleration and velocity
   //! \param[in] phase Index corresponding to the phase
   //! \param[in] dt Timestep in analysis
@@ -171,6 +176,18 @@ class Node : public NodeBase<Tdim> {
 
   //! Apply velocity constraints
   void apply_velocity_constraints() override;
+
+  //! Assign friction constraint
+  //! Directions can take values between 0 and Dim * Nphases
+  //! \param[in] dir Direction of friction constraint
+  //! \param[in] sign Sign of normal wrt coordinate system for friction
+  //! \param[in] friction Applied friction constraint
+  bool assign_friction_constraint(unsigned dir, int sign,
+                                  double friction) override;
+
+  //! Apply friction constraints
+  //! \param[in] dt Time-step
+  void apply_friction_constraints(double dt) override;
 
  private:
   //! Mutex
@@ -191,14 +208,21 @@ class Node : public NodeBase<Tdim> {
   Eigen::Matrix<double, Tdim, Tnphases> external_force_;
   //! Internal force
   Eigen::Matrix<double, Tdim, Tnphases> internal_force_;
+  //! Internal force in the last step
+  Eigen::Matrix<double, Tdim, Tnphases> internal_force_last_;
   //! Velocity
   Eigen::Matrix<double, Tdim, Tnphases> velocity_;
   //! Momentum
   Eigen::Matrix<double, Tdim, Tnphases> momentum_;
   //! Acceleration
   Eigen::Matrix<double, Tdim, Tnphases> acceleration_;
+  // Rayleigh Damping
+  Eigen::Matrix<double, Tdim, Tnphases> damping_force_;
   //! Velocity constraints
   std::map<unsigned, double> velocity_constraints_;
+  //! Frictional constraints
+  bool friction_{false};
+  std::tuple<unsigned, int, double> friction_constraint_;
   //! Logger
   std::unique_ptr<spdlog::logger> console_;
 };  // Node class

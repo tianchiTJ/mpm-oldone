@@ -79,6 +79,9 @@ class MPMExplicit : public MPM {
 
   //! velocity update
   bool velocity_update_{false};
+  //! Rayleigh damping
+  double damping_alpha_;
+  double damping_belta_;
   //! Gravity
   Eigen::Matrix<double, Tdim, 1> gravity_;
   //! Mesh object
@@ -93,6 +96,12 @@ class MPMExplicit : public MPM {
  private:
   //! Boolean to switch between USL and USF
   bool usl_{false};
+  //! Rayleigh Damping parameters
+  //! Alpha
+  double rayleigh_alpha_{0.};
+  //! Beta
+  double rayleigh_beta_{0.};
+
 
 };  // MPMExplicit class
 }  // namespace mpm

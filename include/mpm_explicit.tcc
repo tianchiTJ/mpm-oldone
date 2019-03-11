@@ -35,6 +35,9 @@ mpm::MPMExplicit<Tdim>::MPMExplicit(std::unique_ptr<IO>&& io)
     dt_ = analysis_["dt"].template get<double>();
     // Number of time steps
     nsteps_ = analysis_["nsteps"].template get<mpm::Index>();
+    // Rayleigh Damping parameters
+    rayleigh_alpha_ = analysis_.at("damping").at(0);
+    rayleigh_beta_ = analysis_.at("damping").at(1);
 
     if (analysis_.at("gravity").is_array() &&
         analysis_.at("gravity").size() == gravity_.size()) {
@@ -67,7 +70,7 @@ mpm::MPMExplicit<Tdim>::MPMExplicit(std::unique_ptr<IO>&& io)
   }
 
   // Default VTK attributes
-  std::vector<std::string> vtk = {"velocities", "stresses", "strains"};
+  std::vector<std::string> vtk = {"velocities", "stresses", "strains", "epds"};
   try {
     if (post_process_.at("vtk").is_array() &&
         post_process_.at("vtk").size() > 0) {
@@ -155,6 +158,16 @@ bool mpm::MPMExplicit<Tdim>::initialise_mesh() {
       if (!velocity_constraints)
         throw std::runtime_error(
             "Velocity constraints are not properly assigned");
+    }
+
+    // Read and assign friction constraints
+    if (!io_->file_name("friction_constraints").empty()) {
+      bool friction_constraints = mesh_->assign_friction_constraints(
+          mesh_reader->read_friction_constraints(
+              io_->file_name("friction_constraints")));
+      if (!friction_constraints)
+        throw std::runtime_error(
+            "Friction constraints are not properly assigned");
     }
 
     // Set nodal traction as false if file is empty
@@ -719,6 +732,12 @@ bool mpm::MPMExplicit<Tdim>::solve() {
     }
 #endif
 
+    // Iterate over active nodes to compute the Rayleigh damping force
+    mesh_->iterate_over_nodes_predicate(
+        std::bind(&mpm::NodeBase<Tdim>::compute_damping_force,
+                  std::placeholders::_1, phase, this->dt_,
+                  this->rayleigh_alpha_, this->rayleigh_beta_),
+        std::bind(&mpm::NodeBase<Tdim>::status, std::placeholders::_1));
     // Iterate over active nodes to compute acceleratation and velocity
     mesh_->iterate_over_nodes_predicate(
         std::bind(&mpm::NodeBase<Tdim>::compute_acceleration_velocity,

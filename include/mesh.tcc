@@ -433,14 +433,20 @@ std::vector<Eigen::Matrix<double, 3, 1>> mpm::Mesh<Tdim>::particles_vector_data(
       // Strains
       else if (attribute == "strains") {
         auto pdata = (*pitr)->strain(phase);
-        // Fill stresses to the size of dimensions
+        // Fill strains to the size of dimensions
         for (unsigned i = 0; i < Tdim; ++i) data(i) = pdata(i);
       }
       // Velocities
       else if (attribute == "velocities") {
         auto pdata = (*pitr)->velocity(phase);
-        // Fill stresses to the size of dimensions
+        // Fill velocities to the size of dimensions
         for (unsigned i = 0; i < Tdim; ++i) data(i) = pdata(i);
+      }
+      // Equivalent plastic deviatoric strains
+      else if (attribute == "epds") {
+        auto pdata = (*pitr)->state_variable("epds");
+        // Fill epds to the size of dimensions
+        for (unsigned i = 0; i < Tdim; ++i) data(i) = pdata;
       }
       // Error
       else
@@ -481,6 +487,41 @@ bool mpm::Mesh<Tdim>::assign_velocity_constraints(
 
       if (!status)
         throw std::runtime_error("Node or velocity constraint is invalid");
+    }
+  } catch (std::exception& exception) {
+    console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
+    status = false;
+  }
+  return status;
+}
+
+//! Assign friction constraints to nodes
+template <unsigned Tdim>
+bool mpm::Mesh<Tdim>::assign_friction_constraints(
+    const std::vector<std::tuple<mpm::Index, unsigned, int, double>>&
+        friction_constraints) {
+  bool status = false;
+  try {
+    if (!nodes_.size())
+      throw std::runtime_error(
+          "No nodes have been assigned in mesh, cannot assign friction "
+          "constraints");
+
+    for (const auto& friction_constraint : friction_constraints) {
+      // Node id
+      mpm::Index nid = std::get<0>(friction_constraint);
+      // Direction
+      unsigned dir = std::get<1>(friction_constraint);
+      // Sign
+      int sign = std::get<2>(friction_constraint);
+      // Friction
+      double friction = std::get<3>(friction_constraint);
+
+      // Apply constraint
+      status = map_nodes_[nid]->assign_friction_constraint(dir, sign, friction);
+
+      if (!status)
+        throw std::runtime_error("Node or friction constraint is invalid");
     }
   } catch (std::exception& exception) {
     console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
