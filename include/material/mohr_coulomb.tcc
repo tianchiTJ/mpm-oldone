@@ -546,7 +546,7 @@ Eigen::Matrix<double, 6, 1> mpm::MohrCoulomb<Tdim>::compute_stress(
   // Check if the current stress state is outside the yield surface
   this->compute_stress_invariants(updated_stress, state_vars);
   yield_type = this->compute_yield_state(&yield_function, state_vars);
-  if (epds > epds_peak_ && yield_type != FailureState::Elastic) {
+  if (yield_type != FailureState::Elastic) {
     this->compute_df_dp(yield_type, state_vars, updated_stress, &df_dsigma,
                         &dp_dsigma, &softening);
     if (yield_type == FailureState::Tensile)
