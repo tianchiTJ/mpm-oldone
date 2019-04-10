@@ -35,6 +35,9 @@ typedef struct HDF5Particle {
   bool status;
   // Index
   mpm::Index cell_id;
+  // Plastic strain (ZTC add)
+  double epds, pds0, pds1, pds2, pds3, pds4, pds5;
+
 } HDF5Particle;
 
 }  // namespace mpm

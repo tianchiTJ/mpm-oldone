@@ -66,8 +66,8 @@ mpm::MPMExplicit<Tdim>::MPMExplicit(std::unique_ptr<IO>&& io)
     abort();
   }
 
-  // Default VTK attributes
-  std::vector<std::string> vtk = {"velocities", "stresses", "strains"};
+  // Default VTK attributes (ZTC add "epds")
+  std::vector<std::string> vtk = {"velocities", "stresses", "strains", "epds"};
   try {
     if (post_process_.at("vtk").is_array() &&
         post_process_.at("vtk").size() > 0) {
@@ -157,6 +157,16 @@ bool mpm::MPMExplicit<Tdim>::initialise_mesh() {
             "Velocity constraints are not properly assigned");
     }
 
+    // Read and assign friction constraints
+    if (!io_->file_name("friction_constraints").empty()) {
+      bool friction_constraints = mesh_->assign_friction_constraints(
+          mesh_reader->read_friction_constraints(
+              io_->file_name("friction_constraints")));
+      if (!friction_constraints)
+        throw std::runtime_error(
+            "Friction constraints are not properly assigned");
+    }
+
     // Set nodal traction as false if file is empty
     if (io_->file_name("nodal_tractions").empty()) nodal_tractions_ = false;
 
@@ -209,7 +219,8 @@ bool mpm::MPMExplicit<Tdim>::initialise_particles() {
     MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
 #endif
 
-    // Get mesh properties
+    // Get particle properties
+    auto particle_props = io_->json_object("particle");
     auto mesh_props = io_->json_object("mesh");
     // Get Mesh reader from JSON object
     const std::string reader =
@@ -269,7 +280,7 @@ bool mpm::MPMExplicit<Tdim>::initialise_particles() {
 
     // Particle type
     const auto particle_type =
-        mesh_props["particle_type"].template get<std::string>();
+        particle_props["particle_type"].template get<std::string>();
 
     // Create particles from file
     bool particle_status =
@@ -344,6 +355,17 @@ bool mpm::MPMExplicit<Tdim>::initialise_particles() {
             "Particles tractions are not properly assigned");
     }
 
+    // Read and assign particle velocity constraints (ZTC add)
+    if (!io_->file_name("particles_velocity_constraints").empty()) {
+      bool particles_velocity_constraints =
+          mesh_->assign_particles_velocity_constraints(
+              particle_reader->read_particles_velocity_constraints(
+                  io_->file_name("particles_velocity_constraints")));
+      if (!particles_velocity_constraints)
+        throw std::runtime_error(
+            "Particles velocity constraints are not properly assigned");
+    }
+
     // Read and assign particles stresses
     if (!io_->file_name("particles_stresses").empty()) {
 
@@ -368,6 +390,12 @@ bool mpm::MPMExplicit<Tdim>::initialise_particles() {
                        particles_traction_end - particles_traction_begin)
                        .count());
 
+    // Read and assign particle sets
+    if (!io_->file_name("entity_sets").empty()) {
+      bool particle_sets = mesh_->create_particle_sets(
+          (io_->entity_sets(io_->file_name("entity_sets"), "particle_sets")),
+          check_duplicates);
+    }
   } catch (std::exception& exception) {
     console_->error("#{}: Reading particles: {}", __LINE__, exception.what());
     status = false;
@@ -440,6 +468,37 @@ bool mpm::MPMExplicit<Tdim>::apply_nodal_tractions() {
     console_->error("#{}: Nodal traction: {}", __LINE__, exception.what());
     status = false;
     nodal_tractions_ = false;
+  }
+  return status;
+}
+
+//! Assign materials to particle sets
+template <unsigned Tdim>
+bool mpm::MPMExplicit<Tdim>::apply_entity_sets_properties() {
+  bool status = false;
+  // Assign material to particle sets
+  try {
+    // Get particle properties
+    auto particle_props = io_->json_object("particle");
+    // Get particle sets properties
+    auto particle_sets = particle_props["particle_sets"];
+    // Assign material to each particle sets
+    for (const auto& psets : particle_sets) {
+      // Get set material from list of materials
+      auto set_material = materials_.at(psets["material_id"]);
+      // Get sets ids
+      std::vector<unsigned> sids = psets["set_id"];
+      // Assign material to particles in the specific sets
+      for (const auto& sitr : sids) {
+        mesh_->iterate_over_particle_set(
+            sitr, std::bind(&mpm::ParticleBase<Tdim>::assign_material,
+                            std::placeholders::_1, set_material));
+      }
+    }
+    status = true;
+  } catch (std::exception& exception) {
+    console_->error("#{}: Particle sets material: {}", __LINE__,
+                    exception.what());
   }
   return status;
 }
@@ -583,9 +642,10 @@ bool mpm::MPMExplicit<Tdim>::solve() {
 
   // Assign material to particles
   // Get mesh properties
-  auto mesh_props = io_->json_object("mesh");
+  auto particle_props = io_->json_object("particle");
   // Material id
-  const auto material_id = mesh_props["material_id"].template get<unsigned>();
+  const auto material_id =
+      particle_props["material_id"].template get<unsigned>();
 
   // Get material from list of materials
   auto material = materials_.at(material_id);
@@ -594,6 +654,12 @@ bool mpm::MPMExplicit<Tdim>::solve() {
   mesh_->iterate_over_particles(
       std::bind(&mpm::ParticleBase<Tdim>::assign_material,
                 std::placeholders::_1, material));
+
+  // Assign material to particle sets
+  if (particle_props["particle_sets"].size() != 0) {
+    // Assign material to particles in the specific sets
+    bool set_material_status = this->apply_entity_sets_properties();
+  }
 
   // Check point resume
   if (resume) this->checkpoint_resume();

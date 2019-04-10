@@ -234,6 +234,33 @@ class Particle : public ParticleBase<Tdim> {
     return state_variables_.at(var);
   }
 
+  //! Update state_variable of the particles
+  //! \param[in] name of the state_variable
+  //! \param[in] value of the state_variable
+  // ZTC add
+  void update_state_variable(const std::string& var,
+                             const double val) override {
+    state_variables_.at(var) = val;
+  }
+
+  //! Assign velocity constraints to particles
+  //! \param[in] direction of velocity constraints
+  //! \param[in] velocity A vector of particle velocity
+  //! \retval status Assignment status
+  // ZTC add
+  bool assign_particle_velocity_constraint(unsigned dir,
+                                           double velocity) override;
+
+  //! Apply particle velocity constraints
+  // ZTC add
+  void apply_particle_velocity_constraints() override;
+
+  //! Return global coordinates (ZTC add)
+  VectorDim coordinates() override { return coordinates_; }
+
+  //! Return particle id (ZTC add)
+  mpm::Index pid() override { return id_; }
+
  private:
   //! Update pressure of the particles
   //! \param[in] phase Index corresponding to the phase
@@ -288,6 +315,8 @@ class Particle : public ParticleBase<Tdim> {
   std::vector<Eigen::MatrixXd> bmatrix_;
   //! Logger
   std::unique_ptr<spdlog::logger> console_;
+  //! Particle velocity constraints (ZTC add)
+  std::map<unsigned, double> particle_velocity_constraints_;
 };  // Particle class
 }  // namespace mpm
 

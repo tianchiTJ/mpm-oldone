@@ -13,6 +13,7 @@ using Index = unsigned long long;
 
 // Global dense hash map type
 using dense_map = tsl::robin_map<std::string, double>;
+using set_map = tsl::robin_map<mpm::Index, std::vector<mpm::Index>>;
 // using dense_map = spp::sparse_hash_map<std::string, double>;
 
 // Map class

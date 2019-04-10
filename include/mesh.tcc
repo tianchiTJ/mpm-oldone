@@ -338,8 +338,17 @@ std::vector<std::shared_ptr<mpm::ParticleBase<Tdim>>>
                 [=, &particles](
                     const std::shared_ptr<mpm::ParticleBase<Tdim>>& particle) {
                   // If particle is not found in mesh add to a list of particles
-                  if (!this->locate_particle_cells(particle))
+                  if (!this->locate_particle_cells(particle)) {
                     particles.emplace_back(particle);
+                    // Check bugs (ZTC add)
+                    auto pid = particle->pid();
+                    auto pxi = particle->reference_location();
+                    auto pcoordinates = particle->coordinates();
+                    std::cout << pid << "\n";
+                    std::cout << pxi(0) << "\t" << pxi(1) << "\n";
+                    std::cout << pcoordinates(0) << "\t" << pcoordinates(1)
+                              << "\n";
+                  }
                 });
 
   return particles;
@@ -378,6 +387,14 @@ template <unsigned Tdim>
 template <typename Toper>
 void mpm::Mesh<Tdim>::iterate_over_particles(Toper oper) {
   tbb::parallel_for_each(particles_.cbegin(), particles_.cend(), oper);
+}
+
+//! Iterate over particle set
+template <unsigned Tdim>
+template <typename Toper>
+void mpm::Mesh<Tdim>::iterate_over_particle_set(unsigned set_id, Toper oper) {
+  tbb::parallel_for_each(this->particle_sets_.at(set_id).cbegin(),
+                         this->particle_sets_.at(set_id).cend(), oper);
 }
 
 //! Add a neighbour mesh, using the local id of the mesh and a mesh pointer
@@ -442,6 +459,12 @@ std::vector<Eigen::Matrix<double, 3, 1>> mpm::Mesh<Tdim>::particles_vector_data(
         // Fill stresses to the size of dimensions
         for (unsigned i = 0; i < Tdim; ++i) data(i) = pdata(i);
       }
+      // Equivalent plastic deviatoric strains (ZTC add)
+      else if (attribute == "epds") {
+        auto pdata = (*pitr)->state_variable("epds");
+        // Fill epds to the size of dimensions
+        for (unsigned i = 0; i < Tdim; ++i) data(i) = pdata;
+      }
       // Error
       else
         throw std::runtime_error("Invalid particle vector data attribute: !");
@@ -481,6 +504,41 @@ bool mpm::Mesh<Tdim>::assign_velocity_constraints(
 
       if (!status)
         throw std::runtime_error("Node or velocity constraint is invalid");
+    }
+  } catch (std::exception& exception) {
+    console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
+    status = false;
+  }
+  return status;
+}
+
+//! Assign friction constraints to nodes
+template <unsigned Tdim>
+bool mpm::Mesh<Tdim>::assign_friction_constraints(
+    const std::vector<std::tuple<mpm::Index, unsigned, int, double>>&
+        friction_constraints) {
+  bool status = false;
+  try {
+    if (!nodes_.size())
+      throw std::runtime_error(
+          "No nodes have been assigned in mesh, cannot assign friction "
+          "constraints");
+
+    for (const auto& friction_constraint : friction_constraints) {
+      // Node id
+      mpm::Index nid = std::get<0>(friction_constraint);
+      // Direction
+      unsigned dir = std::get<1>(friction_constraint);
+      // Sign
+      int sign = std::get<2>(friction_constraint);
+      // Friction
+      double friction = std::get<3>(friction_constraint);
+
+      // Apply constraint
+      status = map_nodes_[nid]->assign_friction_constraint(dir, sign, friction);
+
+      if (!status)
+        throw std::runtime_error("Node or friction constraint is invalid");
     }
   } catch (std::exception& exception) {
     console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
@@ -543,6 +601,40 @@ bool mpm::Mesh<Tdim>::assign_particles_tractions(
         status = map_particles_[pid]->assign_traction(phase, dir, traction);
 
       if (!status) throw std::runtime_error("Traction is invalid for particle");
+    }
+  } catch (std::exception& exception) {
+    console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
+    status = false;
+  }
+  return status;
+}
+
+//! Assign particles velocity constraints (ZTC add)
+template <unsigned Tdim>
+bool mpm::Mesh<Tdim>::assign_particles_velocity_constraints(
+    const std::vector<std::tuple<mpm::Index, unsigned, double>>&
+        particle_velocity_constraints) {
+  bool status = true;
+  // TODO: Remove phase
+  const unsigned phase = 0;
+  try {
+    if (!particles_.size())
+      throw std::runtime_error(
+          "No particles have been assigned in mesh, cannot assign velocity");
+    for (const auto& particle_velocity_constraint :
+         particle_velocity_constraints) {
+      // Particle id
+      mpm::Index pid = std::get<0>(particle_velocity_constraint);
+      // Direction
+      unsigned dir = std::get<1>(particle_velocity_constraint);
+      // Velocity
+      double velocity = std::get<2>(particle_velocity_constraint);
+
+      // if (map_particles_.find(pid) != map_particles_.end())
+      status = map_particles_[pid]->assign_particle_velocity_constraint(
+          dir, velocity);
+
+      if (!status) throw std::runtime_error("Velocity is invalid for particle");
     }
   } catch (std::exception& exception) {
     console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
@@ -769,57 +861,110 @@ bool mpm::Mesh<Tdim>::write_particles_hdf5(unsigned phase,
     particle_data[i].status = (*pitr)->status();
 
     particle_data[i].cell_id = (*pitr)->cell_id();
+    // Plastic strain (ZTC add)
+    particle_data[i].epds = (*pitr)->state_variable("epds");
+    particle_data[i].pds0 = (*pitr)->state_variable("pds0");
+    particle_data[i].pds1 = (*pitr)->state_variable("pds1");
+    particle_data[i].pds2 = (*pitr)->state_variable("pds2");
+    particle_data[i].pds3 = (*pitr)->state_variable("pds3");
+    particle_data[i].pds4 = (*pitr)->state_variable("pds4");
+    particle_data[i].pds5 = (*pitr)->state_variable("pds5");
     // Counter
     ++i;
   }
   // Calculate the size and the offsets of our struct members in memory
   const hsize_t NRECORDS = nparticles;
 
-  const hsize_t NFIELDS = 28;
+  const hsize_t NFIELDS = 35;
 
   size_t dst_size = sizeof(HDF5Particle);
   size_t dst_offset[NFIELDS] = {
-      HOFFSET(HDF5Particle, id),         HOFFSET(HDF5Particle, mass),
-      HOFFSET(HDF5Particle, volume),     HOFFSET(HDF5Particle, pressure),
-      HOFFSET(HDF5Particle, coord_x),    HOFFSET(HDF5Particle, coord_y),
-      HOFFSET(HDF5Particle, coord_z),    HOFFSET(HDF5Particle, nsize_x),
-      HOFFSET(HDF5Particle, nsize_y),    HOFFSET(HDF5Particle, nsize_z),
-      HOFFSET(HDF5Particle, velocity_x), HOFFSET(HDF5Particle, velocity_y),
-      HOFFSET(HDF5Particle, velocity_z), HOFFSET(HDF5Particle, stress_xx),
-      HOFFSET(HDF5Particle, stress_yy),  HOFFSET(HDF5Particle, stress_zz),
-      HOFFSET(HDF5Particle, tau_xy),     HOFFSET(HDF5Particle, tau_yz),
-      HOFFSET(HDF5Particle, tau_xz),     HOFFSET(HDF5Particle, strain_xx),
-      HOFFSET(HDF5Particle, strain_yy),  HOFFSET(HDF5Particle, strain_zz),
-      HOFFSET(HDF5Particle, gamma_xy),   HOFFSET(HDF5Particle, gamma_yz),
-      HOFFSET(HDF5Particle, gamma_xz),   HOFFSET(HDF5Particle, epsilon_v),
-      HOFFSET(HDF5Particle, status),     HOFFSET(HDF5Particle, cell_id),
+      HOFFSET(HDF5Particle, id),
+      HOFFSET(HDF5Particle, mass),
+      HOFFSET(HDF5Particle, volume),
+      HOFFSET(HDF5Particle, pressure),
+      HOFFSET(HDF5Particle, coord_x),
+      HOFFSET(HDF5Particle, coord_y),
+      HOFFSET(HDF5Particle, coord_z),
+      HOFFSET(HDF5Particle, nsize_x),
+      HOFFSET(HDF5Particle, nsize_y),
+      HOFFSET(HDF5Particle, nsize_z),
+      HOFFSET(HDF5Particle, velocity_x),
+      HOFFSET(HDF5Particle, velocity_y),
+      HOFFSET(HDF5Particle, velocity_z),
+      HOFFSET(HDF5Particle, stress_xx),
+      HOFFSET(HDF5Particle, stress_yy),
+      HOFFSET(HDF5Particle, stress_zz),
+      HOFFSET(HDF5Particle, tau_xy),
+      HOFFSET(HDF5Particle, tau_yz),
+      HOFFSET(HDF5Particle, tau_xz),
+      HOFFSET(HDF5Particle, strain_xx),
+      HOFFSET(HDF5Particle, strain_yy),
+      HOFFSET(HDF5Particle, strain_zz),
+      HOFFSET(HDF5Particle, gamma_xy),
+      HOFFSET(HDF5Particle, gamma_yz),
+      HOFFSET(HDF5Particle, gamma_xz),
+      HOFFSET(HDF5Particle, epsilon_v),
+      HOFFSET(HDF5Particle, status),
+      HOFFSET(HDF5Particle, cell_id),
+      // Plastic strain (ZTC add)
+      HOFFSET(HDF5Particle, epds),
+      HOFFSET(HDF5Particle, pds0),
+      HOFFSET(HDF5Particle, pds1),
+      HOFFSET(HDF5Particle, pds2),
+      HOFFSET(HDF5Particle, pds3),
+      HOFFSET(HDF5Particle, pds4),
+      HOFFSET(HDF5Particle, pds5),
   };
 
   size_t dst_sizes[NFIELDS] = {
-      sizeof(particle_data[0].id),         sizeof(particle_data[0].mass),
-      sizeof(particle_data[0].volume),     sizeof(particle_data[0].pressure),
-      sizeof(particle_data[0].coord_x),    sizeof(particle_data[0].coord_y),
-      sizeof(particle_data[0].coord_z),    sizeof(particle_data[0].nsize_x),
-      sizeof(particle_data[0].nsize_y),    sizeof(particle_data[0].nsize_z),
-      sizeof(particle_data[0].velocity_x), sizeof(particle_data[0].velocity_y),
-      sizeof(particle_data[0].velocity_z), sizeof(particle_data[0].stress_xx),
-      sizeof(particle_data[0].stress_yy),  sizeof(particle_data[0].stress_zz),
-      sizeof(particle_data[0].tau_xy),     sizeof(particle_data[0].tau_yz),
-      sizeof(particle_data[0].tau_xz),     sizeof(particle_data[0].strain_xx),
-      sizeof(particle_data[0].strain_yy),  sizeof(particle_data[0].strain_zz),
-      sizeof(particle_data[0].gamma_xy),   sizeof(particle_data[0].gamma_yz),
-      sizeof(particle_data[0].gamma_xz),   sizeof(particle_data[0].epsilon_v),
-      sizeof(particle_data[0].status),     sizeof(particle_data[0].cell_id),
+      sizeof(particle_data[0].id),
+      sizeof(particle_data[0].mass),
+      sizeof(particle_data[0].volume),
+      sizeof(particle_data[0].pressure),
+      sizeof(particle_data[0].coord_x),
+      sizeof(particle_data[0].coord_y),
+      sizeof(particle_data[0].coord_z),
+      sizeof(particle_data[0].nsize_x),
+      sizeof(particle_data[0].nsize_y),
+      sizeof(particle_data[0].nsize_z),
+      sizeof(particle_data[0].velocity_x),
+      sizeof(particle_data[0].velocity_y),
+      sizeof(particle_data[0].velocity_z),
+      sizeof(particle_data[0].stress_xx),
+      sizeof(particle_data[0].stress_yy),
+      sizeof(particle_data[0].stress_zz),
+      sizeof(particle_data[0].tau_xy),
+      sizeof(particle_data[0].tau_yz),
+      sizeof(particle_data[0].tau_xz),
+      sizeof(particle_data[0].strain_xx),
+      sizeof(particle_data[0].strain_yy),
+      sizeof(particle_data[0].strain_zz),
+      sizeof(particle_data[0].gamma_xy),
+      sizeof(particle_data[0].gamma_yz),
+      sizeof(particle_data[0].gamma_xz),
+      sizeof(particle_data[0].epsilon_v),
+      sizeof(particle_data[0].status),
+      sizeof(particle_data[0].cell_id),
+      // Plastic strain (ZTC add)
+      sizeof(particle_data[0].epds),
+      sizeof(particle_data[0].pds0),
+      sizeof(particle_data[0].pds1),
+      sizeof(particle_data[0].pds2),
+      sizeof(particle_data[0].pds3),
+      sizeof(particle_data[0].pds4),
+      sizeof(particle_data[0].pds5),
   };
 
   // Define particle field information
   const char* field_names[NFIELDS] = {
-      "id",         "mass",       "volume",     "pressure",  "coord_x",
-      "coord_y",    "coord_z",    "nsize_x",    "nsize_y",   "nsize_z",
-      "velocity_x", "velocity_y", "velocity_z", "stress_xx", "stress_yy",
-      "stress_zz",  "tau_xy",     "tau_yz",     "tau_xz",    "strain_xx",
-      "strain_yy",  "strain_zz",  "gamma_xy",   "gamma_yz",  "gamma_xz",
-      "epsilon_v",  "status",     "cell_id"};
+      "id", "mass", "volume", "pressure", "coord_x", "coord_y", "coord_z",
+      "nsize_x", "nsize_y", "nsize_z", "velocity_x", "velocity_y", "velocity_z",
+      "stress_xx", "stress_yy", "stress_zz", "tau_xy", "tau_yz", "tau_xz",
+      "strain_xx", "strain_yy", "strain_zz", "gamma_xy", "gamma_yz", "gamma_xz",
+      "epsilon_v", "status", "cell_id",
+      // Plastic strain (ZTC add)
+      "epds", "pds0", "pds1", "pds2", "pds3", "pds4", "pds5"};
 
   hid_t field_type[NFIELDS];
   hid_t string_type;
@@ -857,6 +1002,14 @@ bool mpm::Mesh<Tdim>::write_particles_hdf5(unsigned phase,
   field_type[25] = H5T_NATIVE_DOUBLE;
   field_type[26] = H5T_NATIVE_HBOOL;
   field_type[27] = H5T_NATIVE_LLONG;
+  // Plastic strain (ZTC add)
+  field_type[28] = H5T_NATIVE_DOUBLE;
+  field_type[29] = H5T_NATIVE_DOUBLE;
+  field_type[30] = H5T_NATIVE_DOUBLE;
+  field_type[31] = H5T_NATIVE_DOUBLE;
+  field_type[32] = H5T_NATIVE_DOUBLE;
+  field_type[33] = H5T_NATIVE_DOUBLE;
+  field_type[34] = H5T_NATIVE_DOUBLE;
 
   // Create a new file using default properties.
   file_id =
@@ -885,44 +1038,88 @@ bool mpm::Mesh<Tdim>::read_particles_hdf5(unsigned phase,
   const unsigned nparticles = this->nparticles();
   const hsize_t NRECORDS = nparticles;
 
-  const hsize_t NFIELDS = 28;
+  const hsize_t NFIELDS = 35;
 
   size_t dst_size = sizeof(HDF5Particle);
   size_t dst_offset[NFIELDS] = {
-      HOFFSET(HDF5Particle, id),         HOFFSET(HDF5Particle, mass),
-      HOFFSET(HDF5Particle, volume),     HOFFSET(HDF5Particle, pressure),
-      HOFFSET(HDF5Particle, coord_x),    HOFFSET(HDF5Particle, coord_y),
-      HOFFSET(HDF5Particle, coord_z),    HOFFSET(HDF5Particle, nsize_x),
-      HOFFSET(HDF5Particle, nsize_y),    HOFFSET(HDF5Particle, nsize_z),
-      HOFFSET(HDF5Particle, velocity_x), HOFFSET(HDF5Particle, velocity_y),
-      HOFFSET(HDF5Particle, velocity_z), HOFFSET(HDF5Particle, stress_xx),
-      HOFFSET(HDF5Particle, stress_yy),  HOFFSET(HDF5Particle, stress_zz),
-      HOFFSET(HDF5Particle, tau_xy),     HOFFSET(HDF5Particle, tau_yz),
-      HOFFSET(HDF5Particle, tau_xz),     HOFFSET(HDF5Particle, strain_xx),
-      HOFFSET(HDF5Particle, strain_yy),  HOFFSET(HDF5Particle, strain_zz),
-      HOFFSET(HDF5Particle, gamma_xy),   HOFFSET(HDF5Particle, gamma_yz),
-      HOFFSET(HDF5Particle, gamma_xz),   HOFFSET(HDF5Particle, epsilon_v),
-      HOFFSET(HDF5Particle, status),     HOFFSET(HDF5Particle, cell_id),
+      HOFFSET(HDF5Particle, id),
+      HOFFSET(HDF5Particle, mass),
+      HOFFSET(HDF5Particle, volume),
+      HOFFSET(HDF5Particle, pressure),
+      HOFFSET(HDF5Particle, coord_x),
+      HOFFSET(HDF5Particle, coord_y),
+      HOFFSET(HDF5Particle, coord_z),
+      HOFFSET(HDF5Particle, nsize_x),
+      HOFFSET(HDF5Particle, nsize_y),
+      HOFFSET(HDF5Particle, nsize_z),
+      HOFFSET(HDF5Particle, velocity_x),
+      HOFFSET(HDF5Particle, velocity_y),
+      HOFFSET(HDF5Particle, velocity_z),
+      HOFFSET(HDF5Particle, stress_xx),
+      HOFFSET(HDF5Particle, stress_yy),
+      HOFFSET(HDF5Particle, stress_zz),
+      HOFFSET(HDF5Particle, tau_xy),
+      HOFFSET(HDF5Particle, tau_yz),
+      HOFFSET(HDF5Particle, tau_xz),
+      HOFFSET(HDF5Particle, strain_xx),
+      HOFFSET(HDF5Particle, strain_yy),
+      HOFFSET(HDF5Particle, strain_zz),
+      HOFFSET(HDF5Particle, gamma_xy),
+      HOFFSET(HDF5Particle, gamma_yz),
+      HOFFSET(HDF5Particle, gamma_xz),
+      HOFFSET(HDF5Particle, epsilon_v),
+      HOFFSET(HDF5Particle, status),
+      HOFFSET(HDF5Particle, cell_id),
+      // Plastic strain (ZTC add)
+      HOFFSET(HDF5Particle, epds),
+      HOFFSET(HDF5Particle, pds0),
+      HOFFSET(HDF5Particle, pds1),
+      HOFFSET(HDF5Particle, pds2),
+      HOFFSET(HDF5Particle, pds3),
+      HOFFSET(HDF5Particle, pds4),
+      HOFFSET(HDF5Particle, pds5),
   };
 
   // To get size
   HDF5Particle particle;
 
   size_t dst_sizes[NFIELDS] = {
-      sizeof(particle.id),         sizeof(particle.mass),
-      sizeof(particle.volume),     sizeof(particle.pressure),
-      sizeof(particle.coord_x),    sizeof(particle.coord_y),
-      sizeof(particle.coord_z),    sizeof(particle.nsize_x),
-      sizeof(particle.nsize_y),    sizeof(particle.nsize_z),
-      sizeof(particle.velocity_x), sizeof(particle.velocity_y),
-      sizeof(particle.velocity_z), sizeof(particle.stress_xx),
-      sizeof(particle.stress_yy),  sizeof(particle.stress_zz),
-      sizeof(particle.tau_xy),     sizeof(particle.tau_yz),
-      sizeof(particle.tau_xz),     sizeof(particle.strain_xx),
-      sizeof(particle.strain_yy),  sizeof(particle.strain_zz),
-      sizeof(particle.gamma_xy),   sizeof(particle.gamma_yz),
-      sizeof(particle.gamma_xz),   sizeof(particle.epsilon_v),
-      sizeof(particle.status),     sizeof(particle.cell_id),
+      sizeof(particle.id),
+      sizeof(particle.mass),
+      sizeof(particle.volume),
+      sizeof(particle.pressure),
+      sizeof(particle.coord_x),
+      sizeof(particle.coord_y),
+      sizeof(particle.coord_z),
+      sizeof(particle.nsize_x),
+      sizeof(particle.nsize_y),
+      sizeof(particle.nsize_z),
+      sizeof(particle.velocity_x),
+      sizeof(particle.velocity_y),
+      sizeof(particle.velocity_z),
+      sizeof(particle.stress_xx),
+      sizeof(particle.stress_yy),
+      sizeof(particle.stress_zz),
+      sizeof(particle.tau_xy),
+      sizeof(particle.tau_yz),
+      sizeof(particle.tau_xz),
+      sizeof(particle.strain_xx),
+      sizeof(particle.strain_yy),
+      sizeof(particle.strain_zz),
+      sizeof(particle.gamma_xy),
+      sizeof(particle.gamma_yz),
+      sizeof(particle.gamma_xz),
+      sizeof(particle.epsilon_v),
+      sizeof(particle.status),
+      sizeof(particle.cell_id),
+      // Plastic strain (ZTC add)
+      sizeof(particle.epds),
+      sizeof(particle.pds0),
+      sizeof(particle.pds1),
+      sizeof(particle.pds2),
+      sizeof(particle.pds3),
+      sizeof(particle.pds4),
+      sizeof(particle.pds5),
   };
 
   std::vector<HDF5Particle> dst_buf;
@@ -995,4 +1192,35 @@ std::vector<std::array<mpm::Index, 2>> mpm::Mesh<Tdim>::node_pairs() const {
     node_pairs.clear();
   }
   return node_pairs;
+}
+
+//! Create map of container of particles in sets
+template <unsigned Tdim>
+bool mpm::Mesh<Tdim>::create_particle_sets(
+    const tsl::robin_map<mpm::Index, std::vector<mpm::Index>>& particle_sets,
+    bool check_duplicates) {
+  bool status = false;
+  try {
+    // Create container for each particle set
+    for (auto sitr = particle_sets.begin(); sitr != particle_sets.end();
+         ++sitr) {
+      // Create a container for the set
+      Container<ParticleBase<Tdim>> particles;
+      // Reserve the size of the container
+      particles.reserve((sitr->second).size());
+      // Add particles to the container
+      for (auto pid : sitr->second) {
+        bool insertion_status =
+            particles.add(map_particles_[pid], check_duplicates);
+      }
+      // Create the map of the container
+      this->particle_sets_.insert(
+          std::pair<mpm::Index, Container<ParticleBase<Tdim>>>(sitr->first,
+                                                               particles));
+      status = true;
+    }
+  } catch (std::exception& exception) {
+    console_->error("{} #{}: {}\n", __FILE__, __LINE__, exception.what());
+  }
+  return status;
 }

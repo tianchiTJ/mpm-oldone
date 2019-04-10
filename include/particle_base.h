@@ -185,6 +185,23 @@ class ParticleBase {
   //! Return a state variable
   virtual double state_variable(const std::string& var) const = 0;
 
+  //! Update a state variable (ZTC add)
+  virtual void update_state_variable(const std::string& var,
+                                     const double val) = 0;
+
+  //! Assign particle velocity constraint (ZTC add)
+  virtual bool assign_particle_velocity_constraint(unsigned dir,
+                                                   double velocity) = 0;
+
+  //! Apply particle velocity constraints (ZTC add)
+  virtual void apply_particle_velocity_constraints() = 0;
+
+  //! Return global coordinates (ZTC add)
+  virtual VectorDim coordinates() = 0;
+
+  //! Return particle id (ZTC add)
+  virtual mpm::Index pid() = 0;
+
  protected:
   //! particleBase id
   Index id_{std::numeric_limits<Index>::max()};

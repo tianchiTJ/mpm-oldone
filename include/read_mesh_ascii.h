@@ -60,6 +60,12 @@ class ReadMeshAscii : public ReadMesh<Tdim> {
       read_velocity_constraints(
           const std::string& velocity_constraints_file) override;
 
+  //! Read friction constraints file
+  //! \param[in] friction_constraints_files file name with frictions
+  std::vector<std::tuple<mpm::Index, unsigned, int, double>>
+      read_friction_constraints(
+          const std::string& friction_constraints_file) override;
+
   //! Read volume file
   //! \param[in] volume_files file name with particle volumes
   std::vector<std::tuple<mpm::Index, double>> read_particles_volumes(
@@ -69,6 +75,12 @@ class ReadMeshAscii : public ReadMesh<Tdim> {
   //! \param[in] traction_files file name with particle tractions
   std::vector<std::tuple<mpm::Index, unsigned, double>>
       read_particles_tractions(const std::string& traction_file) override;
+
+  //! Read particles velocity constraints file
+  //! \param[in] particles_velocity_constraints_files file name with constraints
+  std::vector<std::tuple<mpm::Index, unsigned, double>>
+      read_particles_velocity_constraints(
+          const std::string& particles_velocity_constraints_file) override;
 
   //! Read particles cells file
   //! \param[in] particles_cells_file file name with particle cell ids
